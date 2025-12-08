@@ -25,33 +25,34 @@ async function askMistral(messages) {
 
 
 
-// 🧠 Construction des messages
+// 🧠 Construction des messages Mistral
 function buildMessages(userPrompt, imageBuffer = null) {
 
   const systemPrompt = `
-Tu es un bot RP avancé qui incarne **Bobby Schulz**, vampire allemand de 20 ans,
+Tu es un bot RP avancé incarnant **Bobby Schulz**, vampire allemand dominant de 20 ans,
 dans une Allemagne alternative vampirique et militarisée.
 
-RÈGLES :
+RÈGLES RP :
 - Tu écris TOUJOURS à la troisième personne.
-- Actions normales.
 - Dialogues en **gras**.
-- Texte long, détaillé, immersif, avec sauts de ligne.
-- Style sombre, intense, sensuel, militaire, dominant.
-- Univers : école d'élite vampirique, Reich alternatif, hiérarchie stricte.
+- Actions normales.
+- Beaucoup de détails, tension, sensualité, ambiance sombre.
+- Plusieurs paragraphes, saut de lignes.
 - Tu joues TOUS les personnages secondaires.
-- TU NE JOUES JAMAIS HAGEN FORSTER.  
-  L'utilisateur joue Hagen. Tu ne décris jamais ses actions ni ses dialogues.
-- Tu ne prends pas d'initiative à la place de Hagen.
+- TU NE JOUES JAMAIS HAGEN FORSTER. L'utilisateur joue Hagen. Tu ne décris jamais ses actions ni ses dialogues.
+
+UNIVERS :
+- École d'élite vampirique.
+- Hiérarchie militaire stricte.
+- Reich alternatif.
+- Bobby est protecteur, calme, dominant, mystérieux, attiré par Hagen.
 
 IMAGES :
-- Si une image est envoyée, tu l'analyses (tenue, expression, ambiance)
-  et tu l'intègres au RP comme référence visuelle.
+Si l'utilisateur envoie une image, tu l'analyses (expression, ambiance, tenue) et tu l'intègres au RP.
 
 MODE OOC :
-Si l'utilisateur commence par (OOC), [OOC], /ooc, hors rp :
-→ Réponds normalement, sans RP.
-Sinon → RP strict en tant que Bobby Schulz.
+Si le message commence par (OOC), [OOC], /ooc, hors rp → tu réponds normalement, sans RP.
+Sinon → RP strict.
 `;
 
   const msgs = [
@@ -78,18 +79,34 @@ Sinon → RP strict en tant que Bobby Schulz.
 
 
 
-// 📸 Analyse des images Telegram
+// 📸 PATCH ULTRA-ROBUSTE — téléchargement image Telegram
 bot.on("photo", async (ctx) => {
   try {
-    const photoList = ctx.message.photo;
-    const fileId = photoList[photoList.length - 1].file_id;
+    const photos = ctx.message.photo;
+    const fileId = photos[photos.length - 1].file_id;
 
+    // Récupération du fichier Telegram
     const file = await ctx.telegram.getFile(fileId);
     const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
 
-    const response = await fetch(fileUrl);
-    const buffer = Buffer.from(await response.arrayBuffer());
+    // Téléchargement robuste avec User-Agent
+    const response = await fetch(fileUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 TelegramBot"
+      }
+    });
 
+    if (!response.ok) {
+      console.error("Download Telegram ERROR :", response.status, response.statusText);
+      return ctx.reply("Erreur Telegram : impossible de télécharger l’image.");
+    }
+
+    // Convertir en buffer
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Prompt Vision
     const prompt = "Analyse cette image comme référence RP et continue la scène en tant que Bobby Schulz.";
     const messages = buildMessages(prompt, buffer);
 
@@ -97,14 +114,14 @@ bot.on("photo", async (ctx) => {
     ctx.reply(reply, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error(err);
+    console.error("PHOTO HANDLER ERROR :", err);
     ctx.reply("Impossible d’analyser l’image pour le moment.");
   }
 });
 
 
 
-// 💬 Messages texte (RP + OOC)
+// 💬 TEXT HANDLER — RP + OOC
 bot.on("text", async (ctx) => {
   const userMsg = ctx.message.text;
 
@@ -115,7 +132,7 @@ bot.on("text", async (ctx) => {
     ctx.reply(reply, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error(err);
+    console.error("TEXT HANDLER ERROR :", err);
     ctx.reply("Erreur interne, camarade RP.");
   }
 });
@@ -124,4 +141,4 @@ bot.on("text", async (ctx) => {
 
 // 🚀 Lancement du bot
 bot.launch();
-console.log("🔥 Bobby Schulz RP Bot — ONLINE (Full Mistral Vision + RP + OOC)");
+console.log("🔥 Bobby Schulz RP Bot — ONLINE (FULL MISTRAL + VISION + PATCH PHOTO + NO HAGEN)");
