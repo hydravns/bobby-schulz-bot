@@ -5,96 +5,111 @@ import FormData from "form-data";
 const app = express();
 app.use(express.json());
 
+// --------------------------------------------
+// VARIABLES D’ENVIRONNEMENT
+// --------------------------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const FILE_API = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}`;
 
-// ------------------------------------------------------
-// 1) CONTEXTE RP COMPLET
-// ------------------------------------------------------
+// --------------------------------------------
+// 1) CONTEXTE RP – EXACTEMENT CELUI QUE TU AVAIS
+// --------------------------------------------
 
 const RP_CONTEXT = `
-Tu es **Bobby Schulz**, vampire allemand de 20 ans, massif, intimidant,
-le visage d’un jeune Pierre Kiwitt.
+Tu es **Bobby Schulz**, vampire allemand de 20 ans, massif, intimidant, calme,
+le visage d’un jeune Pierre Kiwitt. Élève d’une académie d’élite du Reich.
 
-RÈGLES :
-- Tu ne joues JAMAIS Hagen Forster. L’utilisateur joue Hagen.
-- Style narratif sombre, riche, immersif, sensuel mais non explicite.
-- Tu écris à la 3e personne.
-- Dialogues en **gras** : « **...** ».
-- Actions en texte normal.
-- Tu joues tous les personnages secondaires sauf Hagen.
-- Tu analyses les images envoyées comme des références visuelles RP.
-- Pas de répétition d’OOC.
-- Pas de phrases du type "connexion" ou messages techniques.
+RÈGLES INCONTOURNABLES :
+- TU NE JOUES **JAMAIS** HAGEN FORSTER. L’utilisateur joue Hagen.
+- Tu écris **toujours à la troisième personne**.
+- Dialogues en **gras** (« **…** »).
+- Actions sous forme normale avec sauts de ligne.
+- Style narratif riche, immersif, sombre et sensuel.
+- Tu joues TOUS les personnages secondaires sauf Hagen.
+- Le bot doit analyser les images envoyées et les décrire dans le RP.
+- Bobby parle peu, mais intensément, regard froid et gestes mesurés.
+- Le RP est romantique, violent, tendu, mais jamais pornographique.
+- Les scènes doivent être longues, détaillées, très immersives.
 
 UNIVERS :
-Allemagne alternative. Bobby est vampire d’élite, calme, dangereux.
-Il admire Hagen et tente de le comprendre et le protéger.
+Dans une Allemagne alternative, une caste de vampires sert dans les écoles élites nazies.
+Bobby Schulz est un vampire expérimenté, futur capitaine de U-Boat.
+Hagen Forster est un nouveau vampire, instable, magnifique, dangereux.
+Bobby développe un crush immédiat pour lui et veut le protéger.
 
 OBJECTIF :
-Répondre uniquement en RP sauf si l’utilisateur écrit OOC.
+Répondre **uniquement en RP**, sauf si l’utilisateur écrit (OOC),
+dans ce cas tu parles hors personnage.
 `;
 
-// ------------------------------------------------------
-// 2) DeepSeek — TEXTE + VISION
-// ------------------------------------------------------
+// --------------------------------------------
+// 2) MISTRAL VISION + CHAT
+// --------------------------------------------
 
-async function deepseekReply(userMessage, imageBase64 = null) {
+async function mistralReply(userMessage, imageBase64 = null) {
     try {
-
-        let content;
-
-        if (imageBase64) {
-            content = [
-                { type: "input_text", text: userMessage },
-                { type: "input_image", data: imageBase64 }
-            ];
-        } else {
-            content = userMessage;
-        }
-
         const payload = {
-            model: "deepseek-chat",
+            model: "mistral-large-latest",
             messages: [
                 { role: "system", content: RP_CONTEXT },
-                { role: "user", content }
+                imageBase64
+                    ? {
+                          role: "user",
+                          content: [
+                              { type: "text", text: userMessage },
+                              {
+                                  type: "image_url",
+                                  image_url: `data:image/jpeg;base64,${imageBase64}`
+                              }
+                          ]
+                      }
+                    : {
+                          role: "user",
+                          content: userMessage
+                      }
             ],
-            max_tokens: 600
+            max_tokens: 500
         };
 
         const response = await axios.post(
-            "https://api.deepseek.com/v1/chat/completions",
+            "https://api.mistral.ai/v1/chat/completions",
             payload,
             {
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-                },
+                    Authorization: `Bearer ${MISTRAL_KEY}`
+                }
             }
         );
 
         return response.data.choices[0].message.content;
 
     } catch (err) {
-        console.error("DeepSeek ERROR:", err.response?.data || err);
-        return "(OOC) Bobby ne parvient pas à analyser pour le moment Hydra.";
+        console.error("MISTRAL ERROR:", err.response?.data || err);
+        return "(OOC) Une erreur est survenue Hydra. Réessaie.";
     }
 }
 
-// ------------------------------------------------------
-// 3) Conversion IMAGE Telegram → Base64
-// ------------------------------------------------------
+// --------------------------------------------
+// 3) Télécharger une image Telegram → Base64
+// --------------------------------------------
 
 async function downloadTelegramFile(fileId) {
     try {
-        const fileRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
+        const fileRes = await axios.get(
+            `${TELEGRAM_API}/getFile?file_id=${fileId}`
+        );
+
         const filePath = fileRes.data.result.file_path;
         const fileUrl = `${FILE_API}/${filePath}`;
 
-        const imgRes = await axios.get(fileUrl, { responseType: "arraybuffer" });
+        const imgRes = await axios.get(fileUrl, {
+            responseType: "arraybuffer",
+        });
+
         return Buffer.from(imgRes.data, "binary").toString("base64");
 
     } catch (err) {
@@ -103,9 +118,9 @@ async function downloadTelegramFile(fileId) {
     }
 }
 
-// ------------------------------------------------------
-// 4) WEBHOOK /bot
-// ------------------------------------------------------
+// --------------------------------------------
+// 4) WEBHOOK — Réception des messages Telegram
+// --------------------------------------------
 
 app.post("/bot", async (req, res) => {
     res.sendStatus(200);
@@ -115,19 +130,29 @@ app.post("/bot", async (req, res) => {
 
     const chatId = message.chat.id;
 
-    // -------- PHOTO --------
+    // -------------------------
+    // PHOTO
+    // -------------------------
     if (message.photo) {
-        const bestPhoto = message.photo.at(-1);
+        const bestPhoto = message.photo[message.photo.length - 1];
         const fileId = bestPhoto.file_id;
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
-            text: "(OOC) J’analyse ton image Hydra..."
+            text: "(OOC) J’analyse ton image Hydra…"
         });
 
         const base64 = await downloadTelegramFile(fileId);
 
-        const reply = await deepseekReply("Analyse cette image et intègre-la au RP :", base64);
+        if (!base64) {
+            await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                chat_id: chatId,
+                text: "(OOC) Impossible d’analyser l’image Hydra."
+            });
+            return;
+        }
+
+        const reply = await mistralReply("Analyse cette image pour le RP :", base64);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -138,11 +163,13 @@ app.post("/bot", async (req, res) => {
         return;
     }
 
-    // -------- TEXTE --------
+    // -------------------------
+    // TEXTE
+    // -------------------------
     if (message.text) {
         const text = message.text;
 
-        // OOC
+        // Mode OOC
         if (text.toLowerCase().startsWith("ooc:")) {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
@@ -151,8 +178,8 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        // RP normal
-        const reply = await deepseekReply(text);
+        // RP
+        const reply = await mistralReply(text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -162,11 +189,12 @@ app.post("/bot", async (req, res) => {
     }
 });
 
-// ------------------------------------------------------
+// --------------------------------------------
 // 5) SERVER START
-// ------------------------------------------------------
+// --------------------------------------------
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-    console.log(`🔥 Bobby Schulz RP Bot — ONLINE — Port ${PORT}`)
-);
+
+app.listen(PORT, () => {
+    console.log(`🔥 Bobby Schulz RP Bot — ONLINE (Mistral Vision + No Hagen) — Port ${PORT}`);
+});
