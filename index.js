@@ -5,7 +5,9 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_KEY;
 
 
+// ---------------------------
 // 🔥 Fonction Mistral (Vision + RP)
+// ---------------------------
 async function askMistral(messages) {
   const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
     method: "POST",
@@ -25,39 +27,39 @@ async function askMistral(messages) {
 
 
 
-// 🧠 Construction des messages Mistral
+// ---------------------------
+// 🧠 Construction des messages
+// ---------------------------
 function buildMessages(userPrompt, imageBuffer = null) {
 
   const systemPrompt = `
-Tu es un bot RP avancé incarnant **Bobby Schulz**, vampire allemand dominant de 20 ans,
-dans une Allemagne alternative vampirique et militarisée.
+Tu es un bot RP incarnant **Bobby Schulz**, vampire allemand dominant de 20 ans,
+dans une Allemagne alternative vampirique.
 
-RÈGLES RP :
-- Tu écris TOUJOURS à la troisième personne.
+🔥 RÈGLES RP :
+- Toujours à la troisième personne.
 - Dialogues en **gras**.
 - Actions normales.
-- Beaucoup de détails, tension, sensualité, ambiance sombre.
-- Plusieurs paragraphes, saut de lignes.
+- Style sombre, immersif, détaillé, intense.
+- Longs paragraphes, tension physique et émotionnelle.
 - Tu joues TOUS les personnages secondaires.
-- TU NE JOUES JAMAIS HAGEN FORSTER. L'utilisateur joue Hagen. Tu ne décris jamais ses actions ni ses dialogues.
+- ❌ Tu NE joues JAMAIS Hagen Forster : l'utilisateur joue Hagen. Tu ne décris jamais ses actions ou ses paroles.
 
-UNIVERS :
-- École d'élite vampirique.
-- Hiérarchie militaire stricte.
-- Reich alternatif.
-- Bobby est protecteur, calme, dominant, mystérieux, attiré par Hagen.
+🌒 UNIVERS :
+- École militaire d’élite pour vampires.
+- Reich alternatif vampirique.
+- Hiérarchie, discipline, domination.
+- Bobby est protecteur, calme, dangereux, attiré par Hagen.
 
-IMAGES :
-Si l'utilisateur envoie une image, tu l'analyses (expression, ambiance, tenue) et tu l'intègres au RP.
+🖼️ IMAGES :
+Si une image est envoyée, tu l'analyses (expression, tenue, ambiance) et tu l'intègres dans la scène.
 
-MODE OOC :
-Si le message commence par (OOC), [OOC], /ooc, hors rp → tu réponds normalement, sans RP.
-Sinon → RP strict.
+🎭 MODE OOC :
+Si le message commence par (OOC), [OOC], /ooc ou "hors rp", tu réponds hors RP.
+Sinon : RP strict.
 `;
 
-  const msgs = [
-    { role: "system", content: systemPrompt }
-  ];
+  const msgs = [{ role: "system", content: systemPrompt }];
 
   if (imageBuffer) {
     msgs.push({
@@ -79,66 +81,103 @@ Sinon → RP strict.
 
 
 
-// 📸 PATCH ULTRA-ROBUSTE — téléchargement image Telegram
+// ---------------------------
+// 📥 Téléchargement robuste des fichiers Telegram
+// ---------------------------
+async function downloadTelegramFile(ctx, fileId) {
+  const file = await ctx.telegram.getFile(fileId);
+  const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+
+  const response = await fetch(fileUrl, {
+    method: "GET",
+    headers: { "User-Agent": "Mozilla/5.0 TelegramBot" }
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed Telegram download: " + response.statusText);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+
+
+// ---------------------------
+// 📸 HANDLER PHOTO (images compressées)
+// ---------------------------
 bot.on("photo", async (ctx) => {
   try {
     const photos = ctx.message.photo;
-    const fileId = photos[photos.length - 1].file_id;
-
-    // Récupération du fichier Telegram
-    const file = await ctx.telegram.getFile(fileId);
-    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
-
-    // Téléchargement robuste avec User-Agent
-    const response = await fetch(fileUrl, {
-      method: "GET",
-      headers: {
-        "User-Agent": "Mozilla/5.0 TelegramBot"
-      }
-    });
-
-    if (!response.ok) {
-      console.error("Download Telegram ERROR :", response.status, response.statusText);
-      return ctx.reply("Erreur Telegram : impossible de télécharger l’image.");
+    if (!photos || photos.length === 0) {
+      return ctx.reply("Erreur : aucune photo détectée.");
     }
 
-    // Convertir en buffer
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const fileId = photos[photos.length - 1].file_id;
+    const buffer = await downloadTelegramFile(ctx, fileId);
 
-    // Prompt Vision
-    const prompt = "Analyse cette image comme référence RP et continue la scène en tant que Bobby Schulz.";
+    const prompt = "Analyse cette image (PHOTO Telegram) comme référence RP.";
     const messages = buildMessages(prompt, buffer);
 
     const reply = await askMistral(messages);
     ctx.reply(reply, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error("PHOTO HANDLER ERROR :", err);
-    ctx.reply("Impossible d’analyser l’image pour le moment.");
+    console.error("PHOTO ERROR:", err);
+    ctx.reply("Impossible d’analyser l’image (photo).");
   }
 });
 
 
 
-// 💬 TEXT HANDLER — RP + OOC
-bot.on("text", async (ctx) => {
-  const userMsg = ctx.message.text;
-
+// ---------------------------
+// 📄 HANDLER DOCUMENT (images haute qualité / iPhone)
+// ---------------------------
+bot.on("document", async (ctx) => {
   try {
-    const messages = buildMessages(userMsg);
-    const reply = await askMistral(messages);
+    const doc = ctx.message.document;
 
+    if (!doc.mime_type || !doc.mime_type.startsWith("image/")) {
+      return ctx.reply("Ce fichier n'est pas une image.");
+    }
+
+    const buffer = await downloadTelegramFile(ctx, doc.file_id);
+
+    const prompt = "Analyse cette image (DOCUMENT Telegram) comme référence RP.";
+    const messages = buildMessages(prompt, buffer);
+
+    const reply = await askMistral(messages);
     ctx.reply(reply, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error("TEXT HANDLER ERROR :", err);
+    console.error("DOCUMENT ERROR:", err);
+    ctx.reply("Impossible d’analyser l’image (document).");
+  }
+});
+
+
+
+// ---------------------------
+// 💬 HANDLER TEXTE (RP + OOC)
+// ---------------------------
+bot.on("text", async (ctx) => {
+  try {
+    const userMsg = ctx.message.text;
+    const messages = buildMessages(userMsg);
+
+    const reply = await askMistral(messages);
+    ctx.reply(reply, { parse_mode: "Markdown" });
+
+  } catch (err) {
+    console.error("TEXT ERROR:", err);
     ctx.reply("Erreur interne, camarade RP.");
   }
 });
 
 
 
+// ---------------------------
 // 🚀 Lancement du bot
+// ---------------------------
 bot.launch();
-console.log("🔥 Bobby Schulz RP Bot — ONLINE (FULL MISTRAL + VISION + PATCH PHOTO + NO HAGEN)");
+console.log("🔥 Bobby Schulz RP Bot — ONLINE (FULL MISTRAL + PHOTO/DOC PATCH + NO HAGEN)");
