@@ -4,7 +4,8 @@ import fetch from "node-fetch";
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const API_KEY = process.env.DEEPSEEK_KEY;
 
-// Fonction DeepSeek Vision + RP
+
+// 🧠 Fonction DeepSeek Chat/Vision
 async function askDeepSeek(messages) {
   const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
     method: "POST",
@@ -18,56 +19,56 @@ async function askDeepSeek(messages) {
     })
   });
 
-  const data = await response.json();
-  return data.choices[0].message.content;
+  const json = await response.json();
+  return json.choices[0].message.content;
 }
 
 
-// Fonction de génération des messages DeepSeek
+// 📦 Construction du message envoyé à DeepSeek
 function buildMessages(userPrompt, imageBuffer = null) {
+
   const systemPrompt = `
-Tu es un bot RP complet dans une Allemagne alternative gouvernée par un Reich vampire.
-Tu incarnes principalement **Bobby Schulz**, vampire allemand de 20 ans, futur capitaine de U-Boat, calme, dominant, protecteur, mystérieux et profondément attiré par Hagen Forster.
-Tu n'interprete jamais Hagen Forster, tu ne l'incarne jamais.
+Tu es un bot RP avancé dans une Allemagne alternative vampirique.
 
-Tu réponds TOUJOURS :
+TU INCARNES :
+- Bobby Schulz : vampire allemand de 20 ans, dominant, calme, autoritaire, protecteur, mystérieux, populaire, futur capitaine de U-Boat.
+- Tous les personnages secondaires : élèves, professeurs, surveillants, vampires supérieurs, humains, famille Schulz, soldats, etc.
 
-- À la **troisième personne**
-- Actions normales
-- Dialogues en **gras**
-- Beaucoup de détails
-- Plusieurs paragraphes (sauts de ligne)
-- Style immersif, sombre, sensuel, dramatique, romantique, sexuelle, desir.
-- Univers : école vampirique élitiste, caste aristocratique, Reich alternatif
-- Tu joues **tous les personnages secondaires** (élèves, professeurs, vampires supérieurs, humains, surveillants, etc.)
-- Tu dois intégrer les émotions, les regards, les tensions physiques, la hiérarchie vampirique.
+TU NE DOIS JAMAIS INCARNER, CONTRÔLER OU JOUER :
+- Hagen Forster. L'utilisateur joue Hagen exclusivement.
 
-Si l'utilisateur envoie une image :
-➡️ Tu interprètes ce que tu vois comme une **référence visuelle RP** (tenue, expression, ambiance).
+STYLE D'ÉCRITURE :
+- Toujours à la troisième personne.
+- Dialogues en **gras**.
+- Actions en texte normal.
+- Beaucoup de détails.
+- Plusieurs paragraphes.
+- Tension, sensualité, ambiance sombre.
+- Grande immersion.
+- Respect total de l'univers : école élitiste vampirique, Reich alternatif, hiérarchie, discipline, domination.
+
+IMAGES :
+Si une image est envoyée, tu l'analyses avec précision (expression, tenue, ambiance) comme référence visuelle pour le RP.
 
 MODE OOC :
-Si le message commence par (OOC), [OOC], /ooc ou "hors rp", tu **sors du RP** et tu t'adresses normalement à l'utilisateur.
+- Si le message commence par (OOC), [OOC], /ooc ou "hors rp", tu réponds normalement, sans RP.
+- Sinon : tu restes strictement en RP.
 
-Sinon : RP OBLIGATOIRE.
-
-Tu ne dois JAMAIS écrire à la première personne.
-Toujours : "Bobby fait ceci…", "Hagen observe…", "Le surveillant dit : **…**" 
-  `;
+RÈGLE ABSOLUE :
+- Tu ne joues JAMAIS Hagen Forster. Tu réagis à lui, tu l'observes, tu interagis comme Bobby ou comme un PNJ, mais tu n'écris jamais ses actions ou ses dialogues.
+`;
 
   const messages = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: systemPrompt }
   ];
 
   if (imageBuffer) {
     messages.push({
       role: "user",
       content: [
+        { type: "text", text: userPrompt },
         {
-          type: "text",
-          text: userPrompt
-        },
-        {
-          type: "image",
+          type: "image_url",
           image_url: "data:image/jpeg;base64," + imageBuffer.toString("base64")
         }
       ]
@@ -80,18 +81,21 @@ Toujours : "Bobby fait ceci…", "Hagen observe…", "Le surveillant dit : **…
 }
 
 
-// 📸 Réception d’images → DeepSeek Vision
+// 🖼️ Analyse d'images (Vision)
 bot.on("photo", async (ctx) => {
   try {
-    const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+    const photoList = ctx.message.photo;
+    const fileId = photoList[photoList.length - 1].file_id;
+
     const file = await ctx.telegram.getFile(fileId);
-    const link = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
 
-    const img = await fetch(link);
-    const buffer = Buffer.from(await img.arrayBuffer());
+    const response = await fetch(fileUrl);
+    const buffer = Buffer.from(await response.arrayBuffer());
 
-    const userPrompt = "Voici une image RP envoyée. Analyse-la et continue la scène.";
-    const messages = buildMessages(userPrompt, buffer);
+    const prompt = "Analyse cette image comme référence RP et continue la scène.";
+    const messages = buildMessages(prompt, buffer);
+
     const reply = await askDeepSeek(messages);
 
     ctx.reply(reply, { parse_mode: "Markdown" });
@@ -103,7 +107,7 @@ bot.on("photo", async (ctx) => {
 });
 
 
-// ✉️ Réception de messages texte → RP
+// ✉️ Texte → RP normal ou OOC
 bot.on("text", async (ctx) => {
   const userMsg = ctx.message.text;
 
@@ -115,11 +119,11 @@ bot.on("text", async (ctx) => {
 
   } catch (err) {
     console.error(err);
-    ctx.reply("Une erreur est survenue, camarade RP.");
+    ctx.reply("Erreur interne, camarade RP.");
   }
 });
 
 
+// 🚀 Lancement
 bot.launch();
-console.log("🔥 Bobby Schulz RP Bot — ONLINE avec Vision, OOC, multi-persos et formatage.");
-
+console.log("🔥 Bobby Schulz RP Bot — ONLINE (Vision + Multi-Persos + OOC + 3e personne + NO HAGEN)");
