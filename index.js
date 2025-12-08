@@ -2,19 +2,19 @@ import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const API_KEY = process.env.DEEPSEEK_KEY;
+const MISTRAL_KEY = process.env.MISTRAL_KEY;
 
 
-// 🧠 Fonction DeepSeek Chat/Vision
-async function askDeepSeek(messages) {
-  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+// 🔥 Fonction Mistral (Vision + RP)
+async function askMistral(messages) {
+  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${API_KEY}`,
+      "Authorization": `Bearer ${MISTRAL_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: "mistral-large-latest",
       messages
     })
   });
@@ -24,46 +24,42 @@ async function askDeepSeek(messages) {
 }
 
 
-// 📦 Construction du message envoyé à DeepSeek
+
+// 🧠 Construction des messages
 function buildMessages(userPrompt, imageBuffer = null) {
 
   const systemPrompt = `
-Tu es un bot RP avancé dans une Allemagne alternative vampirique.
+Tu es un bot RP avancé qui incarne **Bobby Schulz**, vampire allemand de 20 ans,
+dans une Allemagne alternative vampirique et militarisée.
 
-TU INCARNES :
-- Bobby Schulz : vampire allemand de 20 ans, dominant, calme, autoritaire, protecteur, mystérieux, populaire, futur capitaine de U-Boat.
-- Tous les personnages secondaires : élèves, professeurs, surveillants, vampires supérieurs, humains, famille Schulz, soldats, etc.
-
-TU NE DOIS JAMAIS INCARNER, CONTRÔLER OU JOUER :
-- Hagen Forster. L'utilisateur joue Hagen exclusivement.
-
-STYLE D'ÉCRITURE :
-- Toujours à la troisième personne.
+RÈGLES :
+- Tu écris TOUJOURS à la troisième personne.
+- Actions normales.
 - Dialogues en **gras**.
-- Actions en texte normal.
-- Beaucoup de détails.
-- Plusieurs paragraphes.
-- Tension, sensualité, ambiance sombre.
-- Grande immersion.
-- Respect total de l'univers : école élitiste vampirique, Reich alternatif, hiérarchie, discipline, domination.
+- Texte long, détaillé, immersif, avec sauts de ligne.
+- Style sombre, intense, sensuel, militaire, dominant.
+- Univers : école d'élite vampirique, Reich alternatif, hiérarchie stricte.
+- Tu joues TOUS les personnages secondaires.
+- TU NE JOUES JAMAIS HAGEN FORSTER.  
+  L'utilisateur joue Hagen. Tu ne décris jamais ses actions ni ses dialogues.
+- Tu ne prends pas d'initiative à la place de Hagen.
 
 IMAGES :
-Si une image est envoyée, tu l'analyses avec précision (expression, tenue, ambiance) comme référence visuelle pour le RP.
+- Si une image est envoyée, tu l'analyses (tenue, expression, ambiance)
+  et tu l'intègres au RP comme référence visuelle.
 
 MODE OOC :
-- Si le message commence par (OOC), [OOC], /ooc ou "hors rp", tu réponds normalement, sans RP.
-- Sinon : tu restes strictement en RP.
-
-RÈGLE ABSOLUE :
-- Tu ne joues JAMAIS Hagen Forster. Tu réagis à lui, tu l'observes, tu interagis comme Bobby ou comme un PNJ, mais tu n'écris jamais ses actions ou ses dialogues.
+Si l'utilisateur commence par (OOC), [OOC], /ooc, hors rp :
+→ Réponds normalement, sans RP.
+Sinon → RP strict en tant que Bobby Schulz.
 `;
 
-  const messages = [
+  const msgs = [
     { role: "system", content: systemPrompt }
   ];
 
   if (imageBuffer) {
-    messages.push({
+    msgs.push({
       role: "user",
       content: [
         { type: "text", text: userPrompt },
@@ -74,14 +70,15 @@ RÈGLE ABSOLUE :
       ]
     });
   } else {
-    messages.push({ role: "user", content: userPrompt });
+    msgs.push({ role: "user", content: userPrompt });
   }
 
-  return messages;
+  return msgs;
 }
 
 
-// 🖼️ Analyse d'images (Vision)
+
+// 📸 Analyse des images Telegram
 bot.on("photo", async (ctx) => {
   try {
     const photoList = ctx.message.photo;
@@ -93,27 +90,27 @@ bot.on("photo", async (ctx) => {
     const response = await fetch(fileUrl);
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    const prompt = "Analyse cette image comme référence RP et continue la scène.";
+    const prompt = "Analyse cette image comme référence RP et continue la scène en tant que Bobby Schulz.";
     const messages = buildMessages(prompt, buffer);
 
-    const reply = await askDeepSeek(messages);
-
+    const reply = await askMistral(messages);
     ctx.reply(reply, { parse_mode: "Markdown" });
 
   } catch (err) {
     console.error(err);
-    ctx.reply("Impossible d’analyser l'image pour le moment.");
+    ctx.reply("Impossible d’analyser l’image pour le moment.");
   }
 });
 
 
-// ✉️ Texte → RP normal ou OOC
+
+// 💬 Messages texte (RP + OOC)
 bot.on("text", async (ctx) => {
   const userMsg = ctx.message.text;
 
   try {
     const messages = buildMessages(userMsg);
-    const reply = await askDeepSeek(messages);
+    const reply = await askMistral(messages);
 
     ctx.reply(reply, { parse_mode: "Markdown" });
 
@@ -124,6 +121,7 @@ bot.on("text", async (ctx) => {
 });
 
 
-// 🚀 Lancement
+
+// 🚀 Lancement du bot
 bot.launch();
-console.log("🔥 Bobby Schulz RP Bot — ONLINE (Vision + Multi-Persos + OOC + 3e personne + NO HAGEN)");
+console.log("🔥 Bobby Schulz RP Bot — ONLINE (Full Mistral Vision + RP + OOC)");
