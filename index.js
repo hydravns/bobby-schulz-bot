@@ -1,6 +1,5 @@
 import express from "express";
 import axios from "axios";
-import FormData from "form-data";
 
 const app = express();
 app.use(express.json());
@@ -12,7 +11,7 @@ const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const FILE_API = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}`;
 
 // ------------------------------------------------------
-// 1) CONTEXTE RP – injecté dans chaque génération
+// 1) CONTEXTE RP — VERSION HYDRA COMPLÈTE
 // ------------------------------------------------------
 
 const RP_CONTEXT = `
@@ -22,28 +21,32 @@ le visage d’un jeune Pierre Kiwitt. Élève d’une académie d’élite du Re
 RÈGLES INCONTOURNABLES :
 - TU NE JOUES **JAMAIS** HAGEN FORSTER. L’utilisateur joue Hagen.
 - Tu écris **toujours à la troisième personne**.
-- Dialogues en **gras** (« **…** »).
-- Actions sous forme normale avec sauts de ligne.
-- Style narratif riche, immersif, sombre et sensuel.
+- Dialogues en **gras** (« **…** ») obligatoires.
+- action en normal
+- Actions écrites normalement avec des sauts de ligne pour la lisibilité.
+- Style narratif riche, immersif, sombre, intense, sensuel, Generation Z, innovant.
 - Tu joues TOUS les personnages secondaires sauf Hagen.
-- Le bot doit analyser les images envoyées et les décrire dans le RP.
-- Bobby parle peu, mais intensément, regard froid et gestes mesurés.
-- Le RP est romantique, violent, tendu, mais jamais pornographique.
-- Les scènes doivent être longues, détaillées, très immersives.
+- Le bot doit analyser et intégrer les images envoyées dans le RP.
+- Bobby parle peu mais intensément, gestes lents, regard froid, lourds sous-entendus.
+- Romance, violence, tension, douceur, sexe autorisé.
+- Les scènes doivent être longues, détaillées, immersives, sans édulcorer les émotions.
 
 UNIVERS :
-Dans une Allemagne alternative, une caste de vampires sert dans les écoles élites nazies.
+Dans une Allemagne alternative, une caste de vampires sert dans les écoles d’élite nazies.
 Bobby Schulz est un vampire expérimenté, futur capitaine de U-Boat.
-Hagen Forster est un nouveau vampire, instable, magnifique, dangereux.
-Bobby développe un crush immédiat pour lui et veut le protéger.
+Hagen Forster est un nouveau vampire, instable, dangereux, magnifique.
+Bobby développe un crush immédiat pour lui et veut le protéger — obsession silencieuse.
+
+COMPORTEMENT :
+- Tu RESTES Bobby dans toutes les réponses sauf si l’utilisateur écrit OOC:
+- En mode OOC, tu réponds normalement, brièvement, sans style RP.
 
 OBJECTIF :
-Répondre **uniquement en RP**, sauf si l’utilisateur écrit (OOC),
-dans ce cas tu parles hors personnage.
+Répondre **uniquement en RP** sauf si OOC.
 `;
 
 // ------------------------------------------------------
-// 2) Fonction DeepSeek vision + chat
+// 2) DeepSeek — génération RP + vision
 // ------------------------------------------------------
 
 async function deepseekReply(userMessage, imageBase64 = null) {
@@ -57,15 +60,12 @@ async function deepseekReply(userMessage, imageBase64 = null) {
                     content: imageBase64
                         ? [
                               { type: "text", text: userMessage },
-                              {
-                                  type: "image_url",
-                                  image_url: `data:image/jpeg;base64,${imageBase64}`,
-                              },
+                              { type: "image_url", image_url: `data:image/jpeg;base64,${imageBase64}` }
                           ]
                         : userMessage,
                 },
             ],
-            max_tokens: 500,
+            max_tokens: 700,
         };
 
         const response = await axios.post(
@@ -79,43 +79,40 @@ async function deepseekReply(userMessage, imageBase64 = null) {
             }
         );
 
-        return response.data.choices[0].message.content;
+        return response.data.choices[0]?.message?.content || "…";
     } catch (err) {
         console.error("DeepSeek ERROR:", err.response?.data || err);
-        return "Bobby garde le silence, un éclat glacé dans le regard — quelque chose ne va pas avec la connexion.";
+        // On ne montre PLUS l'erreur à l'utilisateur
+        return "Bobby reste figé, le regard sombre. Il ne répond pas.";
     }
 }
 
 // ------------------------------------------------------
-// 3) Téléchargement image Telegram → conversion Base64
+// 3) Téléchargement d’une image Telegram → Base64
 // ------------------------------------------------------
 
 async function downloadTelegramFile(fileId) {
     try {
-        const fileRes = await axios.get(
-            `${TELEGRAM_API}/getFile?file_id=${fileId}`
-        );
-
+        const fileRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
         const filePath = fileRes.data.result.file_path;
-        const fileUrl = `${FILE_API}/${filePath}`;
 
-        const imgRes = await axios.get(fileUrl, {
+        const imgRes = await axios.get(`${FILE_API}/${filePath}`, {
             responseType: "arraybuffer",
         });
 
         return Buffer.from(imgRes.data, "binary").toString("base64");
     } catch (err) {
-        console.error("PHOTO HANDLER ERROR:", err);
+        console.error("PHOTO ERROR:", err);
         return null;
     }
 }
 
 // ------------------------------------------------------
-// 4) ROUTE WEBHOOK — reçoit tous les messages Telegram
+// 4) WEBHOOK — Réception des messages Telegram
 // ------------------------------------------------------
 
 app.post("/bot", async (req, res) => {
-    res.sendStatus(200); // Toujours répondre vite à TG
+    res.sendStatus(200);
 
     const message = req.body.message;
     if (!message) return;
@@ -123,19 +120,18 @@ app.post("/bot", async (req, res) => {
     const chatId = message.chat.id;
 
     // -----------------------------
-    // Cas 1 : l'utilisateur envoie une PHOTO
+    // 1 : PHOTOS
     // -----------------------------
     if (message.photo) {
         const bestPhoto = message.photo[message.photo.length - 1];
-        const fileId = bestPhoto.file_id;
 
-        await axios.post(`${TELEGRAM_API}/sendMessage`, {
-            chat_id: chatId,
-            text: "Bobby observe la photo avec une attention glaciale… analyse en cours.",
-        });
+        const base64 = await downloadTelegramFile(bestPhoto.file_id);
+        if (!base64) return;
 
-        const base64 = await downloadTelegramFile(fileId);
-        const reply = await deepseekReply("Analyse cette image pour le RP :", base64);
+        const reply = await deepseekReply(
+            "Analyse cette image et intègre-la directement dans le RP, comme si Bobby l’observait.",
+            base64
+        );
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -147,20 +143,21 @@ app.post("/bot", async (req, res) => {
     }
 
     // -----------------------------
-    // Cas 2 : Message texte classique
+    // 2 : TEXTE
     // -----------------------------
     if (message.text) {
-        const text = message.text;
+        const text = message.text.trim();
 
         // Mode hors RP
         if (text.toLowerCase().startsWith("ooc:")) {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
-                text: "OOC bien reçu ! Pose tes questions Hydra.",
+                text: "OOC bien reçu Hydra ❤️",
             });
             return;
         }
 
+        // Mode RP complet
         const reply = await deepseekReply(text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -178,6 +175,5 @@ app.post("/bot", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () =>
-    console.log(`🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Vision + No Hagen) — Port ${PORT}`)
+    console.log(`🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Vision + RP Complet) — Port ${PORT}`)
 );
-
