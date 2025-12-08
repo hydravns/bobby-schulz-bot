@@ -28,6 +28,7 @@ function buildMessages(userPrompt, imageBuffer = null) {
   const systemPrompt = `
 Tu es un bot RP complet dans une Allemagne alternative gouvernée par un Reich vampire.
 Tu incarnes principalement **Bobby Schulz**, vampire allemand de 20 ans, futur capitaine de U-Boat, calme, dominant, protecteur, mystérieux et profondément attiré par Hagen Forster.
+Tu n'interprete jamais Hagen Forster, tu ne l'incarne jamais.
 
 Tu réponds TOUJOURS :
 
@@ -121,3 +122,4 @@ bot.on("text", async (ctx) => {
 
 bot.launch();
 console.log("🔥 Bobby Schulz RP Bot — ONLINE avec Vision, OOC, multi-persos et formatage.");
+
