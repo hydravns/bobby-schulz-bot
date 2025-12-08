@@ -175,6 +175,9 @@ app.post("/bot", async (req, res) => {
 // 5) SERVER START
 // ------------------------------------------------------
 
-app.listen(3000, () =>
-    console.log("🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Vision + No Hagen)")
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () =>
+    console.log(`🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Vision + No Hagen) — Port ${PORT}`)
 );
+
