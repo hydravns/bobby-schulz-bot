@@ -1,183 +1,180 @@
-import { Telegraf } from "telegraf";
-import fetch from "node-fetch";
+import express from "express";
+import axios from "axios";
+import FormData from "form-data";
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const MISTRAL_KEY = process.env.MISTRAL_KEY;
+const app = express();
+app.use(express.json());
 
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
-// ---------------------------
-// 🔥 Fonction Mistral (Vision + RP)
-// ---------------------------
-async function askMistral(messages) {
-  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${MISTRAL_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "mistral-large-latest",
-      messages
-    })
-  });
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+const FILE_API = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}`;
 
-  const json = await response.json();
-  return json.choices[0].message.content;
-}
+// ------------------------------------------------------
+// 1) CONTEXTE RP – injecté dans chaque génération
+// ------------------------------------------------------
 
+const RP_CONTEXT = `
+Tu es **Bobby Schulz**, vampire allemand de 20 ans, massif, intimidant, calme,
+le visage d’un jeune Pierre Kiwitt. Élève d’une académie d’élite du Reich.
 
+RÈGLES INCONTOURNABLES :
+- TU NE JOUES **JAMAIS** HAGEN FORSTER. L’utilisateur joue Hagen.
+- Tu écris **toujours à la troisième personne**.
+- Dialogues en **gras** (« **…** »).
+- Actions sous forme normale avec sauts de ligne.
+- Style narratif riche, immersif, sombre et sensuel.
+- Tu joues TOUS les personnages secondaires sauf Hagen.
+- Le bot doit analyser les images envoyées et les décrire dans le RP.
+- Bobby parle peu, mais intensément, regard froid et gestes mesurés.
+- Le RP est romantique, violent, tendu, mais jamais pornographique.
+- Les scènes doivent être longues, détaillées, très immersives.
 
-// ---------------------------
-// 🧠 Construction des messages
-// ---------------------------
-function buildMessages(userPrompt, imageBuffer = null) {
+UNIVERS :
+Dans une Allemagne alternative, une caste de vampires sert dans les écoles élites nazies.
+Bobby Schulz est un vampire expérimenté, futur capitaine de U-Boat.
+Hagen Forster est un nouveau vampire, instable, magnifique, dangereux.
+Bobby développe un crush immédiat pour lui et veut le protéger.
 
-  const systemPrompt = `
-Tu es un bot RP incarnant **Bobby Schulz**, vampire allemand dominant de 20 ans,
-dans une Allemagne alternative vampirique.
-
-🔥 RÈGLES RP :
-- Toujours à la troisième personne.
-- Dialogues en **gras**.
-- Actions normales.
-- Style sombre, immersif, détaillé, intense.
-- Longs paragraphes, tension physique et émotionnelle.
-- Tu joues TOUS les personnages secondaires.
-- ❌ Tu NE joues JAMAIS Hagen Forster : l'utilisateur joue Hagen. Tu ne décris jamais ses actions ou ses paroles.
-
-🌒 UNIVERS :
-- École militaire d’élite pour vampires.
-- Reich alternatif vampirique.
-- Hiérarchie, discipline, domination.
-- Bobby est protecteur, calme, dangereux, attiré par Hagen.
-
-🖼️ IMAGES :
-Si une image est envoyée, tu l'analyses (expression, tenue, ambiance) et tu l'intègres dans la scène.
-
-🎭 MODE OOC :
-Si le message commence par (OOC), [OOC], /ooc ou "hors rp", tu réponds hors RP.
-Sinon : RP strict.
+OBJECTIF :
+Répondre **uniquement en RP**, sauf si l’utilisateur écrit (OOC),
+dans ce cas tu parles hors personnage.
 `;
 
-  const msgs = [{ role: "system", content: systemPrompt }];
+// ------------------------------------------------------
+// 2) Fonction DeepSeek vision + chat
+// ------------------------------------------------------
 
-  if (imageBuffer) {
-    msgs.push({
-      role: "user",
-      content: [
-        { type: "text", text: userPrompt },
-        {
-          type: "image_url",
-          image_url: "data:image/jpeg;base64," + imageBuffer.toString("base64")
+async function deepseekReply(userMessage, imageBase64 = null) {
+    try {
+        const payload = {
+            model: "deepseek-chat",
+            messages: [
+                { role: "system", content: RP_CONTEXT },
+                {
+                    role: "user",
+                    content: imageBase64
+                        ? [
+                              { type: "text", text: userMessage },
+                              {
+                                  type: "image_url",
+                                  image_url: `data:image/jpeg;base64,${imageBase64}`,
+                              },
+                          ]
+                        : userMessage,
+                },
+            ],
+            max_tokens: 500,
+        };
+
+        const response = await axios.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            payload,
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+                },
+            }
+        );
+
+        return response.data.choices[0].message.content;
+    } catch (err) {
+        console.error("DeepSeek ERROR:", err.response?.data || err);
+        return "Bobby garde le silence, un éclat glacé dans le regard — quelque chose ne va pas avec la connexion.";
+    }
+}
+
+// ------------------------------------------------------
+// 3) Téléchargement image Telegram → conversion Base64
+// ------------------------------------------------------
+
+async function downloadTelegramFile(fileId) {
+    try {
+        const fileRes = await axios.get(
+            `${TELEGRAM_API}/getFile?file_id=${fileId}`
+        );
+
+        const filePath = fileRes.data.result.file_path;
+        const fileUrl = `${FILE_API}/${filePath}`;
+
+        const imgRes = await axios.get(fileUrl, {
+            responseType: "arraybuffer",
+        });
+
+        return Buffer.from(imgRes.data, "binary").toString("base64");
+    } catch (err) {
+        console.error("PHOTO HANDLER ERROR:", err);
+        return null;
+    }
+}
+
+// ------------------------------------------------------
+// 4) ROUTE WEBHOOK — reçoit tous les messages Telegram
+// ------------------------------------------------------
+
+app.post("/bot", async (req, res) => {
+    res.sendStatus(200); // Toujours répondre vite à TG
+
+    const message = req.body.message;
+    if (!message) return;
+
+    const chatId = message.chat.id;
+
+    // -----------------------------
+    // Cas 1 : l'utilisateur envoie une PHOTO
+    // -----------------------------
+    if (message.photo) {
+        const bestPhoto = message.photo[message.photo.length - 1];
+        const fileId = bestPhoto.file_id;
+
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: "Bobby observe la photo avec une attention glaciale… analyse en cours.",
+        });
+
+        const base64 = await downloadTelegramFile(fileId);
+        const reply = await deepseekReply("Analyse cette image pour le RP :", base64);
+
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: reply,
+            parse_mode: "Markdown",
+        });
+
+        return;
+    }
+
+    // -----------------------------
+    // Cas 2 : Message texte classique
+    // -----------------------------
+    if (message.text) {
+        const text = message.text;
+
+        // Mode hors RP
+        if (text.toLowerCase().startsWith("ooc:")) {
+            await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                chat_id: chatId,
+                text: "OOC bien reçu ! Pose tes questions Hydra.",
+            });
+            return;
         }
-      ]
-    });
-  } else {
-    msgs.push({ role: "user", content: userPrompt });
-  }
 
-  return msgs;
-}
+        const reply = await deepseekReply(text);
 
-
-
-// ---------------------------
-// 📥 Téléchargement robuste des fichiers Telegram
-// ---------------------------
-async function downloadTelegramFile(ctx, fileId) {
-  const file = await ctx.telegram.getFile(fileId);
-  const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
-
-  const response = await fetch(fileUrl, {
-    method: "GET",
-    headers: { "User-Agent": "Mozilla/5.0 TelegramBot" }
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed Telegram download: " + response.statusText);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
-
-
-
-// ---------------------------
-// 📸 HANDLER PHOTO (images compressées)
-// ---------------------------
-bot.on("photo", async (ctx) => {
-  try {
-    const photos = ctx.message.photo;
-    if (!photos || photos.length === 0) {
-      return ctx.reply("Erreur : aucune photo détectée.");
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: reply,
+            parse_mode: "Markdown",
+        });
     }
-
-    const fileId = photos[photos.length - 1].file_id;
-    const buffer = await downloadTelegramFile(ctx, fileId);
-
-    const prompt = "Analyse cette image (PHOTO Telegram) comme référence RP.";
-    const messages = buildMessages(prompt, buffer);
-
-    const reply = await askMistral(messages);
-    ctx.reply(reply, { parse_mode: "Markdown" });
-
-  } catch (err) {
-    console.error("PHOTO ERROR:", err);
-    ctx.reply("Impossible d’analyser l’image (photo).");
-  }
 });
 
+// ------------------------------------------------------
+// 5) SERVER START
+// ------------------------------------------------------
 
-
-// ---------------------------
-// 📄 HANDLER DOCUMENT (images haute qualité / iPhone)
-// ---------------------------
-bot.on("document", async (ctx) => {
-  try {
-    const doc = ctx.message.document;
-
-    if (!doc.mime_type || !doc.mime_type.startsWith("image/")) {
-      return ctx.reply("Ce fichier n'est pas une image.");
-    }
-
-    const buffer = await downloadTelegramFile(ctx, doc.file_id);
-
-    const prompt = "Analyse cette image (DOCUMENT Telegram) comme référence RP.";
-    const messages = buildMessages(prompt, buffer);
-
-    const reply = await askMistral(messages);
-    ctx.reply(reply, { parse_mode: "Markdown" });
-
-  } catch (err) {
-    console.error("DOCUMENT ERROR:", err);
-    ctx.reply("Impossible d’analyser l’image (document).");
-  }
-});
-
-
-
-// ---------------------------
-// 💬 HANDLER TEXTE (RP + OOC)
-// ---------------------------
-bot.on("text", async (ctx) => {
-  try {
-    const userMsg = ctx.message.text;
-    const messages = buildMessages(userMsg);
-
-    const reply = await askMistral(messages);
-    ctx.reply(reply, { parse_mode: "Markdown" });
-
-  } catch (err) {
-    console.error("TEXT ERROR:", err);
-    ctx.reply("Erreur interne, camarade RP.");
-  }
-});
-
-
-
-// ---------------------------
-// 🚀 Lancement du bot
-// ---------------------------
-bot.launch();
-console.log("🔥 Bobby Schulz RP Bot — ONLINE (FULL MISTRAL + PHOTO/DOC PATCH + NO HAGEN)");
+app.listen(3000, () =>
+    console.log("🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Vision + No Hagen)")
+);
