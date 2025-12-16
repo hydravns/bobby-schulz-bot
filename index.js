@@ -8,11 +8,10 @@ app.use(express.json());
 // VARIABLES D’ENVIRONNEMENT
 // --------------------------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL =
-    process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+const DEEPSEEK_API = "https://api.deepseek.com/v1/chat/completions";
 
 // --------------------------------------------
 // 1) CONTEXTE RP — VERROUILLÉ
@@ -78,15 +77,15 @@ const RP_STARTER = `
 `;
 
 // --------------------------------------------
-// 2) CLAUDE SONNET 4.5 — TEXTE UNIQUEMENT
+// 2) DEEPSEEK — CHAT COMPLETION
 // --------------------------------------------
 
-async function claudeReply(userMessage) {
+async function deepseekReply(userMessage) {
     try {
         const response = await axios.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            DEEPSEEK_API,
             {
-                model: OPENROUTER_MODEL,
+                model: "deepseek-chat",
                 messages: [
                     { role: "system", content: RP_CONTEXT },
                     { role: "user", content: userMessage }
@@ -97,9 +96,7 @@ async function claudeReply(userMessage) {
             {
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${OPENROUTER_KEY}`,
-                    "HTTP-Referer": "https://localhost",
-                    "X-Title": "Bobby-Schulz-Telegram-RP"
+                    Authorization: `Bearer ${DEEPSEEK_KEY}`
                 }
             }
         );
@@ -107,7 +104,7 @@ async function claudeReply(userMessage) {
         return response.data.choices[0].message.content;
 
     } catch (err) {
-        console.error("OPENROUTER ERROR:", err.response?.data || err);
+        console.error("DEEPSEEK ERROR:", err.response?.data || err);
         return "(OOC) Une erreur est survenue Hydra. Réessaie.";
     }
 }
@@ -150,7 +147,7 @@ app.post("/bot", async (req, res) => {
         }
 
         // RP NORMAL
-        const reply = await claudeReply(text);
+        const reply = await deepseekReply(text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -168,7 +165,6 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
     console.log(
-        `🔥 Bobby Schulz RP Bot — ONLINE (Claude Sonnet 4.5 / OpenRouter / Stable) — Port ${PORT}`
+        `🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek / Stable / RP Locked) — Port ${PORT}`
     );
 });
-
