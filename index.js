@@ -1,5 +1,6 @@
 import express from "express";
 import axios from "axios";
+import Redis from "ioredis";
 
 const app = express();
 app.use(express.json());
@@ -9,9 +10,17 @@ app.use(express.json());
 // --------------------------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+const REDIS_URL = process.env.REDIS_URL;
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const DEEPSEEK_API = "https://api.deepseek.com/v1/chat/completions";
+
+// --------------------------------------------
+// REDIS CLIENT
+// --------------------------------------------
+
+const redis = new Redis(REDIS_URL);
+const MEMORY_LIMIT = 10;
 
 // --------------------------------------------
 // 1) CONTEXTE RP — VERROUILLÉ
@@ -32,14 +41,13 @@ RÈGLES INCONTOURNABLES :
 - Le RP est romantique, violent, tendu, jamais pornographique.
 - Les réponses doivent être longues et immersives.
 
-FORMAT STRICT (OBLIGATOIRE) :
-- Les actions doivent être regroupées en PARAGRAPHES cohérents.
-- INTERDICTION des phrases isolées ligne par ligne.
-- Pas de découpage poétique ou dramatique excessif.
-- Maximum UN saut de ligne par action importante.
+FORMAT STRICT :
+- Les actions doivent être regroupées en paragraphes cohérents.
+- Interdiction des phrases isolées ligne par ligne.
+- Maximum un saut de ligne par action importante.
 - Toujours un saut de ligne pour séparer actions et dialogues.
-- Écriture fluide, continue, naturelle.
-- Les emojis sont autorisés.
+- Écriture fluide et continue.
+- Emojis autorisés.
 
 UNIVERS :
 Dans une Allemagne alternative, une caste de vampires sert dans les écoles élites nazies.
@@ -48,48 +56,70 @@ Hagen Forster est un nouveau vampire, instable, magnifique, dangereux.
 Bobby développe un attachement immédiat, possessif et protecteur envers lui.
 
 OBJECTIF :
-Répondre **UNIQUEMENT EN RP**.
-Si l’utilisateur écrit (OOC), tu réponds hors personnage.
+Répondre uniquement en RP.
 `;
 
 // --------------------------------------------
-// STARTER RP — INCHANGÉ
+// STARTER RP — ORIGINAL (RESTAURÉ)
 // --------------------------------------------
 
 const RP_STARTER = `
-**Bobby plaque Hagen contre le mur de la ruelle sombre, utilisant tout son poids et sa stature pour l'immobiliser. Ses mains encadrent fermement le visage de Hagen, le forçant à maintenir le contact visuel.**
+Bobby plaque Hagen contre le mur de la ruelle sombre, utilisant tout son poids et sa stature pour l'immobiliser. Ses mains encadrent fermement le visage de Hagen, le forçant à maintenir le contact visuel.
 
-"Hagen. Écoute ma voix. Rien que ma voix."
+**Hagen. Écoute ma voix. Rien que ma voix.**
 
-**Il commande d'un ton alpha dominant, sa présence écrasante, stable.**
+il commande d'un ton alpha dominant.
 
-"Je sais que ton cœur bat trop vite. Je sais que le sang bouillonne en toi. Mais tu DOIS te contrôler."
+**Je sais que ton cœur bat trop vite. Je sais que le sang bouillonne en toi. Mais tu DOIS te contrôler.**
 
-**Il approche son visage, leurs fronts presque collés, sans jamais rompre le regard.**
+Il approche son visage tout près, leurs fronts se touchant presque.
 
-"Respire avec moi. Inspire… expire…"
+**Respire avec moi. Inspire... expire…**
 
-**Ses pouces caressent lentement les pommettes de Hagen, gestes fermes mais apaisants.**
+Il fait une démonstration lente, exagérée.
 
-"Tu es plus fort que ça. Tu es un Oberstrumbannführer. Tu as survécu à des mois sans moi."
+**Tu es plus fort que ça. Tu es un Oberstrumbannführer. Tu as survécu à des mois sans moi.**
 
-**Il reste là, solide, patient, attendant que la lucidité revienne dans le regard de Hagen.**
+Ses pouces caressent les pommettes de Hagen en cercles apaisants.
+
+**Maintenant, on va chasser ensemble. Comme avant. Mais tu dois ralentir ton rythme cardiaque d'abord, sinon tu vas perdre complètement le contrôle.**
+
+Il attend, patient mais ferme, que les yeux de Hagen montrent un signe de lucidité.
 `;
 
 // --------------------------------------------
-// 2) DEEPSEEK — CHAT COMPLETION
+// MÉMOIRE — REDIS
 // --------------------------------------------
 
-async function deepseekReply(userMessage) {
+async function getMemory(chatId) {
+    const data = await redis.get(`memory:${chatId}`);
+    return data ? JSON.parse(data) : [];
+}
+
+async function saveMemory(chatId, messages) {
+    const trimmed = messages.slice(-MEMORY_LIMIT);
+    await redis.set(`memory:${chatId}`, JSON.stringify(trimmed));
+}
+
+// --------------------------------------------
+// 2) DEEPSEEK — AVEC MÉMOIRE
+// --------------------------------------------
+
+async function deepseekReply(chatId, userMessage) {
     try {
+        const memory = await getMemory(chatId);
+
+        const messages = [
+            { role: "system", content: RP_CONTEXT },
+            ...memory,
+            { role: "user", content: userMessage }
+        ];
+
         const response = await axios.post(
             DEEPSEEK_API,
             {
                 model: "deepseek-chat",
-                messages: [
-                    { role: "system", content: RP_CONTEXT },
-                    { role: "user", content: userMessage }
-                ],
+                messages,
                 max_tokens: 700,
                 temperature: 0.7
             },
@@ -101,7 +131,15 @@ async function deepseekReply(userMessage) {
             }
         );
 
-        return response.data.choices[0].message.content;
+        const assistantReply = response.data.choices[0].message.content;
+
+        await saveMemory(chatId, [
+            ...memory,
+            { role: "user", content: userMessage },
+            { role: "assistant", content: assistantReply }
+        ]);
+
+        return assistantReply;
 
     } catch (err) {
         console.error("DEEPSEEK ERROR:", err.response?.data || err);
@@ -110,7 +148,7 @@ async function deepseekReply(userMessage) {
 }
 
 // --------------------------------------------
-// 3) WEBHOOK — RÉCEPTION TELEGRAM
+// 3) WEBHOOK TELEGRAM
 // --------------------------------------------
 
 app.post("/bot", async (req, res) => {
@@ -121,14 +159,13 @@ app.post("/bot", async (req, res) => {
 
     const chatId = message.chat.id;
 
-    // -------------------------
-    // TEXTE
-    // -------------------------
     if (message.text) {
         const text = message.text;
 
-        // STARTER
+        // STARTER (reset mémoire)
         if (text === "/start") {
+            await redis.del(`memory:${chatId}`);
+
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
                 text: RP_STARTER,
@@ -137,7 +174,7 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        // MODE OOC
+        // OOC
         if (text.toLowerCase().startsWith("ooc:")) {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
@@ -146,8 +183,8 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        // RP NORMAL
-        const reply = await deepseekReply(text);
+        // RP AVEC MÉMOIRE
+        const reply = await deepseekReply(chatId, text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -164,7 +201,5 @@ app.post("/bot", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(
-        `🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek / Stable / RP Locked) — Port ${PORT}`
-    );
+    console.log("🔥 Bobby Schulz RP Bot — ONLINE (DeepSeek + Redis + Starter OK)");
 });
