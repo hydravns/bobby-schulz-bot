@@ -10,7 +10,7 @@ app.use(express.json());
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL =
-    process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4.5";
+    process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
@@ -171,3 +171,4 @@ app.listen(PORT, () => {
         `🔥 Bobby Schulz RP Bot — ONLINE (Claude Sonnet 4.5 / OpenRouter / Stable) — Port ${PORT}`
     );
 });
+
