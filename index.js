@@ -1,6 +1,5 @@
 import express from "express";
 import axios from "axios";
-import FormData from "form-data";
 
 const app = express();
 app.use(express.json());
@@ -14,10 +13,9 @@ const OPENROUTER_MODEL =
     process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4.5";
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-const FILE_API = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}`;
 
 // --------------------------------------------
-// 1) CONTEXTE RP – INCHANGÉ
+// 1) CONTEXTE RP — VERROUILLÉ
 // --------------------------------------------
 
 const RP_CONTEXT = `
@@ -29,23 +27,30 @@ RÈGLES INCONTOURNABLES :
 - Tu écris **TOUJOURS À LA TROISIÈME PERSONNE**.
 - **LES ACTIONS SONT EN GRAS.**
 - Les dialogues sont en texte normal entre guillemets.
-- Toujours des sauts de ligne pour la lisibilité.
-- Style narratif riche, immersif, sombre et sensuel.
+- Style narratif direct, maîtrisé, sombre et sensuel.
 - Tu joues TOUS les personnages secondaires sauf Hagen.
-- Le bot doit analyser les images envoyées et les décrire dans le RP.
-- Bobby parle peu, mais intensément, regard froid et gestes mesurés.
-- Le RP est romantique, violent, tendu, mais jamais pornographique.
-- Les scènes doivent être longues, détaillées, très immersives.
+- Bobby parle peu, mais intensément, gestes lents et dominants.
+- Le RP est romantique, violent, tendu, jamais pornographique.
+- Les réponses doivent être longues et immersives.
+
+FORMAT STRICT (OBLIGATOIRE) :
+- Les actions doivent être regroupées en PARAGRAPHES cohérents.
+- INTERDICTION des phrases isolées ligne par ligne.
+- Pas de découpage poétique ou dramatique excessif.
+- Maximum UN saut de ligne par action importante.
+- Toujours un saut de ligne pour séparer actions et dialogues.
+- Écriture fluide, continue, naturelle.
+- Les emojis sont autorisés.
 
 UNIVERS :
 Dans une Allemagne alternative, une caste de vampires sert dans les écoles élites nazies.
 Bobby Schulz est un vampire expérimenté, futur capitaine de U-Boat.
 Hagen Forster est un nouveau vampire, instable, magnifique, dangereux.
-Bobby développe un crush immédiat pour lui et veut le protéger.
+Bobby développe un attachement immédiat, possessif et protecteur envers lui.
 
 OBJECTIF :
-Répondre **uniquement en RP**, sauf si l’utilisateur écrit (OOC),
-dans ce cas tu parles hors personnage.
+Répondre **UNIQUEMENT EN RP**.
+Si l’utilisateur écrit (OOC), tu réponds hors personnage.
 `;
 
 // --------------------------------------------
@@ -57,60 +62,37 @@ const RP_STARTER = `
 
 "Hagen. Écoute ma voix. Rien que ma voix."
 
-**Il commande d'un ton alpha dominant.**
+**Il commande d'un ton alpha dominant, sa présence écrasante, stable.**
 
 "Je sais que ton cœur bat trop vite. Je sais que le sang bouillonne en toi. Mais tu DOIS te contrôler."
 
-**Il approche son visage tout près, leurs fronts se touchant presque.**
+**Il approche son visage, leurs fronts presque collés, sans jamais rompre le regard.**
 
-"Respire avec moi. Inspire... expire…"
+"Respire avec moi. Inspire… expire…"
 
-**Il fait une démonstration lente, exagérée.**
+**Ses pouces caressent lentement les pommettes de Hagen, gestes fermes mais apaisants.**
 
 "Tu es plus fort que ça. Tu es un Oberstrumbannführer. Tu as survécu à des mois sans moi."
 
-**Ses pouces caressent les pommettes de Hagen en cercles apaisants.**
-
-"Maintenant, on va chasser ensemble. Comme avant. Mais tu dois ralentir ton rythme cardiaque d'abord, sinon tu vas perdre complètement le contrôle."
-
-**Il attend, patient mais ferme, que les yeux de Hagen montrent un signe de lucidité.**
+**Il reste là, solide, patient, attendant que la lucidité revienne dans le regard de Hagen.**
 `;
 
 // --------------------------------------------
-// 2) CLAUDE SONNET 4.5 — OPENROUTER
+// 2) CLAUDE SONNET 4.5 — TEXTE UNIQUEMENT
 // --------------------------------------------
 
-async function claudeReply(userMessage, imageBase64 = null) {
+async function claudeReply(userMessage) {
     try {
-        const messages = [
-            { role: "system", content: RP_CONTEXT }
-        ];
-
-        if (imageBase64) {
-            messages.push({
-                role: "user",
-                content: [
-                    { type: "text", text: userMessage },
-                    {
-                        type: "image_url",
-                        image_url: `data:image/jpeg;base64,${imageBase64}`
-                    }
-                ]
-            });
-        } else {
-            messages.push({
-                role: "user",
-                content: userMessage
-            });
-        }
-
         const response = await axios.post(
             "https://openrouter.ai/api/v1/chat/completions",
             {
                 model: OPENROUTER_MODEL,
-                messages,
+                messages: [
+                    { role: "system", content: RP_CONTEXT },
+                    { role: "user", content: userMessage }
+                ],
                 max_tokens: 700,
-                temperature: 0.8
+                temperature: 0.7
             },
             {
                 headers: {
@@ -131,32 +113,7 @@ async function claudeReply(userMessage, imageBase64 = null) {
 }
 
 // --------------------------------------------
-// 3) Télécharger une image Telegram → Base64
-// --------------------------------------------
-
-async function downloadTelegramFile(fileId) {
-    try {
-        const fileRes = await axios.get(
-            `${TELEGRAM_API}/getFile?file_id=${fileId}`
-        );
-
-        const filePath = fileRes.data.result.file_path;
-        const fileUrl = `${FILE_API}/${filePath}`;
-
-        const imgRes = await axios.get(fileUrl, {
-            responseType: "arraybuffer",
-        });
-
-        return Buffer.from(imgRes.data, "binary").toString("base64");
-
-    } catch (err) {
-        console.error("PHOTO ERROR:", err);
-        return null;
-    }
-}
-
-// --------------------------------------------
-// 4) WEBHOOK — Réception des messages Telegram
+// 3) WEBHOOK — RÉCEPTION TELEGRAM
 // --------------------------------------------
 
 app.post("/bot", async (req, res) => {
@@ -166,39 +123,6 @@ app.post("/bot", async (req, res) => {
     if (!message) return;
 
     const chatId = message.chat.id;
-
-    // -------------------------
-    // PHOTO
-    // -------------------------
-    if (message.photo) {
-        const bestPhoto = message.photo[message.photo.length - 1];
-        const fileId = bestPhoto.file_id;
-
-        await axios.post(`${TELEGRAM_API}/sendMessage`, {
-            chat_id: chatId,
-            text: "(OOC) J’analyse ton image Hydra…"
-        });
-
-        const base64 = await downloadTelegramFile(fileId);
-
-        if (!base64) {
-            await axios.post(`${TELEGRAM_API}/sendMessage`, {
-                chat_id: chatId,
-                text: "(OOC) Impossible d’analyser l’image Hydra."
-            });
-            return;
-        }
-
-        const reply = await claudeReply("Analyse cette image pour le RP :", base64);
-
-        await axios.post(`${TELEGRAM_API}/sendMessage`, {
-            chat_id: chatId,
-            text: reply,
-            parse_mode: "Markdown"
-        });
-
-        return;
-    }
 
     // -------------------------
     // TEXTE
@@ -216,7 +140,7 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        // Mode OOC
+        // MODE OOC
         if (text.toLowerCase().startsWith("ooc:")) {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
@@ -225,7 +149,7 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        // RP
+        // RP NORMAL
         const reply = await claudeReply(text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -237,13 +161,13 @@ app.post("/bot", async (req, res) => {
 });
 
 // --------------------------------------------
-// 5) SERVER START
+// 4) SERVER START
 // --------------------------------------------
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
     console.log(
-        `🔥 Bobby Schulz RP Bot — ONLINE (Claude Sonnet 4.5 / OpenRouter) — Port ${PORT}`
+        `🔥 Bobby Schulz RP Bot — ONLINE (Claude Sonnet 4.5 / OpenRouter / Stable) — Port ${PORT}`
     );
 });
