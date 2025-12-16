@@ -9,13 +9,15 @@ app.use(express.json());
 // VARIABLES D’ENVIRONNEMENT
 // --------------------------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_MODEL =
+    process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4.5";
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 const FILE_API = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}`;
 
 // --------------------------------------------
-// 1) CONTEXTE RP – EXACTEMENT CELUI QUE TU AVAIS
+// 1) CONTEXTE RP – INCHANGÉ
 // --------------------------------------------
 
 const RP_CONTEXT = `
@@ -47,7 +49,7 @@ dans ce cas tu parles hors personnage.
 `;
 
 // --------------------------------------------
-// STARTER RP — AJOUT UNIQUE
+// STARTER RP — INCHANGÉ
 // --------------------------------------------
 
 const RP_STARTER = `
@@ -75,41 +77,47 @@ const RP_STARTER = `
 `;
 
 // --------------------------------------------
-// 2) MISTRAL VISION + CHAT
+// 2) CLAUDE SONNET 4.5 — OPENROUTER
 // --------------------------------------------
 
-async function mistralReply(userMessage, imageBase64 = null) {
+async function claudeReply(userMessage, imageBase64 = null) {
     try {
-        const payload = {
-            model: "mistral-large-latest",
-            messages: [
-                { role: "system", content: RP_CONTEXT },
-                imageBase64
-                    ? {
-                          role: "user",
-                          content: [
-                              { type: "text", text: userMessage },
-                              {
-                                  type: "image_url",
-                                  image_url: `data:image/jpeg;base64,${imageBase64}`
-                              }
-                          ]
-                      }
-                    : {
-                          role: "user",
-                          content: userMessage
-                      }
-            ],
-            max_tokens: 500
-        };
+        const messages = [
+            { role: "system", content: RP_CONTEXT }
+        ];
+
+        if (imageBase64) {
+            messages.push({
+                role: "user",
+                content: [
+                    { type: "text", text: userMessage },
+                    {
+                        type: "image_url",
+                        image_url: `data:image/jpeg;base64,${imageBase64}`
+                    }
+                ]
+            });
+        } else {
+            messages.push({
+                role: "user",
+                content: userMessage
+            });
+        }
 
         const response = await axios.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            payload,
+            "https://openrouter.ai/api/v1/chat/completions",
+            {
+                model: OPENROUTER_MODEL,
+                messages,
+                max_tokens: 700,
+                temperature: 0.8
+            },
             {
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${MISTRAL_KEY}`
+                    Authorization: `Bearer ${OPENROUTER_KEY}`,
+                    "HTTP-Referer": "https://localhost",
+                    "X-Title": "Bobby-Schulz-Telegram-RP"
                 }
             }
         );
@@ -117,7 +125,7 @@ async function mistralReply(userMessage, imageBase64 = null) {
         return response.data.choices[0].message.content;
 
     } catch (err) {
-        console.error("MISTRAL ERROR:", err.response?.data || err);
+        console.error("OPENROUTER ERROR:", err.response?.data || err);
         return "(OOC) Une erreur est survenue Hydra. Réessaie.";
     }
 }
@@ -181,7 +189,7 @@ app.post("/bot", async (req, res) => {
             return;
         }
 
-        const reply = await mistralReply("Analyse cette image pour le RP :", base64);
+        const reply = await claudeReply("Analyse cette image pour le RP :", base64);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -218,7 +226,7 @@ app.post("/bot", async (req, res) => {
         }
 
         // RP
-        const reply = await mistralReply(text);
+        const reply = await claudeReply(text);
 
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
@@ -235,5 +243,7 @@ app.post("/bot", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(`🔥 Bobby Schulz RP Bot — ONLINE (Mistral Vision + No Hagen) — Port ${PORT}`);
+    console.log(
+        `🔥 Bobby Schulz RP Bot — ONLINE (Claude Sonnet 4.5 / OpenRouter) — Port ${PORT}`
+    );
 });
